@@ -1,0 +1,12 @@
+{
+  "name": "quote-scout",
+  "version": "0.1.0",
+  "private": true,
+  "description": "長い記事の中から、自分が Tumblr に引用しそうな箇所をハイライトするユーザースクリプト",
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
