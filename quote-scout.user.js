@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Quote Scout
 // @namespace    https://github.com/dlwr/quote-scout
-// @version      0.1.0
+// @version      0.2.0
 // @description  長い記事の中から、自分が Tumblr に引用しそうな箇所をハイライトする
 // @match        *://*/*
 // @noframes
@@ -9,8 +9,8 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
+// @grant        unsafeWindow
 // @connect      api.anthropic.com
-// @connect      api.tumblr.com
 // @downloadURL  https://raw.githubusercontent.com/dlwr/quote-scout/main/quote-scout.user.js
 // @updateURL    https://raw.githubusercontent.com/dlwr/quote-scout/main/quote-scout.user.js
 // ==/UserScript==
@@ -24,6 +24,20 @@ function extractQuote(post) {
   const blocks = post.content?.length ? post.content : post.trail?.[0]?.content || [];
   const block = blocks.find((b) => b.type === "text" && (b.subtype === "quote" || b.subtype === "indented"));
   return block ? block.text.replace(/^“|”$/g, "").trim() : null;
+}
+
+async function collectQuotes(fetchPage, limit) {
+  const quotes = [];
+  for (let offset = 0; quotes.length < limit; ) {
+    const posts = await fetchPage(offset);
+    if (!posts.length) break;
+    offset += posts.length;
+    for (const post of posts) {
+      const quote = extractQuote(post);
+      if (quote && quotes.length < limit) quotes.push(quote.slice(0, 400));
+    }
+  }
+  return quotes;
 }
 
 function findMatch(texts, quote) {
@@ -58,12 +72,13 @@ function shareUrl(quote, title, url) {
 }
 
 if (typeof module !== "undefined") {
-  module.exports = { extractQuote, findMatch, shareUrl };
+  module.exports = { extractQuote, collectQuotes, findMatch, shareUrl };
 } else {
   GM_registerMenuCommand("引用候補をハイライト", () => run().catch((e) => showPanel(`失敗: ${e.message}`)));
-  GM_registerMenuCommand("API キーを設定し直す", () => {
-    for (const key of ["anthropicApiKey", "tumblrApiKey", "tumblrBlog"]) GM_setValue(key, "");
+  GM_registerMenuCommand("設定をリセット", () => {
+    for (const key of ["anthropicApiKey", "tumblrBlog", "examples"]) GM_setValue(key, null);
   });
+  if (location.hostname === "www.tumblr.com") refreshExamples().catch((e) => console.warn("[quote-scout]", e));
 }
 
 function setting(key, message, fallback = "") {
@@ -89,27 +104,31 @@ function request(opts) {
   });
 }
 
-async function fetchExamples() {
+async function refreshExamples() {
   const cached = GM_getValue("examples", null);
-  if (cached && Date.now() - cached.at < EXAMPLE_CACHE_MS) return cached.quotes;
+  if (cached && Date.now() - cached.at < EXAMPLE_CACHE_MS) return;
 
-  const blog = setting("tumblrBlog", "引用を集める Tumblr ブログ名", "dlwr");
-  const apiKey = setting("tumblrApiKey", "Tumblr の OAuth consumer key（api_key として使う）");
-  const quotes = [];
-  for (let offset = 0; quotes.length < EXAMPLE_LIMIT; offset += 20) {
-    const params = new URLSearchParams({ api_key: apiKey, npf: "true", limit: "20", offset: String(offset) });
-    const { response } = await request({
-      method: "GET",
-      url: `https://api.tumblr.com/v2/blog/${encodeURIComponent(blog)}.tumblr.com/posts/quote?${params}`,
-    });
-    if (!response.posts.length) break;
-    for (const post of response.posts) {
-      const quote = extractQuote(post);
-      if (quote) quotes.push(quote.slice(0, 400));
-    }
+  let apiFetch;
+  for (let i = 0; i < 50 && !apiFetch; i++) {
+    apiFetch = unsafeWindow.tumblr?.apiFetch;
+    if (!apiFetch) await new Promise((r) => setTimeout(r, 200));
   }
+  if (!apiFetch) throw new Error("window.tumblr.apiFetch が見つからない");
+
+  const blog = setting("tumblrBlog", "quote-scout: 過去の引用を集める Tumblr ブログ名", "dlwr");
+  const quotes = await collectQuotes(async (offset) => {
+    const { response } = await apiFetch(`/v2/blog/${encodeURIComponent(blog)}/posts`, {
+      queryParams: { type: "quote", limit: 20, offset },
+    });
+    return response.posts.filter((p) => p.objectType === "post");
+  }, EXAMPLE_LIMIT);
   GM_setValue("examples", { at: Date.now(), quotes });
-  return quotes;
+}
+
+function loadExamples() {
+  const cached = GM_getValue("examples", null);
+  if (!cached?.quotes.length) throw new Error("過去の引用がまだ無い。tumblr.com を一度開くと読み込まれる");
+  return cached.quotes;
 }
 
 async function pickQuotes(examples, article) {
@@ -250,8 +269,7 @@ function renderResults(located) {
 }
 
 async function run() {
-  showPanel("過去の引用を読み込み中…");
-  const examples = await fetchExamples();
+  const examples = loadExamples();
   const root = document.querySelector("article") || document.querySelector("main") || document.body;
   showPanel(`引用候補を探しています…（過去の引用 ${examples.length} 件を参照）`);
   const located = locate(root, await pickQuotes(examples, root.innerText));
