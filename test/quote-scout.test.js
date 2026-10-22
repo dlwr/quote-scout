@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert");
-const { extractQuote, collectQuotes, findMatch, shareUrl } = require("../quote-scout.user.js");
+const { extractQuote, collectQuotes, findMatch } = require("../quote-scout.user.js");
 
 test("extractQuote: 自分の quote 投稿は content の quote ブロックを返す", () => {
   const post = {
@@ -41,15 +41,6 @@ test("findMatch: 空白や改行の違いは無視する", () => {
 
 test("findMatch: 見つからなければ null", () => {
   assert.strictEqual(findMatch(["abc"], "xyz"), null);
-});
-
-test("shareUrl: Tumblr の quote 投稿画面の URL を作る", () => {
-  const url = new URL(shareUrl("本文", "記事タイトル", "https://example.com/a"));
-  assert.strictEqual(url.origin + url.pathname, "https://www.tumblr.com/widgets/share/tool");
-  assert.strictEqual(url.searchParams.get("posttype"), "quote");
-  assert.strictEqual(url.searchParams.get("content"), "本文");
-  assert.strictEqual(url.searchParams.get("caption"), '<a href="https://example.com/a">記事タイトル</a>');
-  assert.strictEqual(url.searchParams.get("canonicalUrl"), "https://example.com/a");
 });
 
 test("collectQuotes: 上限に達するまでページを辿って引用を集める", async () => {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Quote Scout
 // @namespace    https://github.com/dlwr/quote-scout
-// @version      0.2.0
+// @version      0.3.0
 // @description  長い記事の中から、自分が Tumblr に引用しそうな箇所をハイライトする
 // @match        *://*/*
 // @noframes
@@ -15,10 +15,10 @@
 // @updateURL    https://raw.githubusercontent.com/dlwr/quote-scout/main/quote-scout.user.js
 // ==/UserScript==
 
-const MODEL = "claude-opus-5-5";
+const MODEL = "claude-sonnet-5-5";
 const EXAMPLE_LIMIT = 200;
 const EXAMPLE_CACHE_MS = 7 * 24 * 60 * 60 * 1000;
-const PANEL_ID = "quote-scout";
+const HIGHLIGHT = "quote-scout";
 
 function extractQuote(post) {
   const blocks = post.content?.length ? post.content : post.trail?.[0]?.content || [];
@@ -57,24 +57,10 @@ function findMatch(texts, quote) {
   return { start: positions[at], end: [lastNode, lastOffset + 1] };
 }
 
-function escapeHtml(s) {
-  return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
-}
-
-function shareUrl(quote, title, url) {
-  const params = new URLSearchParams({
-    posttype: "quote",
-    content: quote,
-    caption: `<a href="${escapeHtml(url)}">${escapeHtml(title)}</a>`,
-    canonicalUrl: url,
-  });
-  return `https://www.tumblr.com/widgets/share/tool?${params}`;
-}
-
 if (typeof module !== "undefined") {
-  module.exports = { extractQuote, collectQuotes, findMatch, shareUrl };
+  module.exports = { extractQuote, collectQuotes, findMatch };
 } else {
-  GM_registerMenuCommand("引用候補をハイライト", () => run().catch((e) => showPanel(`失敗: ${e.message}`)));
+  GM_registerMenuCommand("引用候補をハイライト", () => run().catch((e) => alert(`quote-scout: ${e.message}`)));
   GM_registerMenuCommand("設定をリセット", () => {
     for (const key of ["anthropicApiKey", "tumblrBlog", "examples"]) GM_setValue(key, null);
   });
@@ -154,15 +140,7 @@ async function pickQuotes(examples, article) {
           schema: {
             type: "object",
             properties: {
-              quotes: {
-                type: "array",
-                items: {
-                  type: "object",
-                  properties: { text: { type: "string" }, reason: { type: "string" } },
-                  required: ["text", "reason"],
-                  additionalProperties: false,
-                },
-              },
+              quotes: { type: "array", items: { type: "string" } },
             },
             required: ["quotes"],
             additionalProperties: false,
@@ -170,7 +148,7 @@ async function pickQuotes(examples, article) {
         },
       },
       system:
-        "ユーザーは気に入った文章の一節を Tumblr に quote として投稿している。過去に引用した文章からユーザーの好みを読み取り、与えられた記事本文の中からユーザーが引用しそうな箇所を最大10個、引用しそうな順に選ぶ。text は記事本文から一字一句そのまま抜き出すこと（要約・言い換え・省略をしない）。長さは過去の引用に合わせる。reason はなぜ好みに合うかを一文で。",
+        "ユーザーは気に入った文章の一節を Tumblr に quote として投稿している。過去に引用した文章からユーザーの好みを読み取り、与えられた記事本文の中からユーザーが引用しそうな箇所を最大10個、引用しそうな順に選ぶ。text は記事本文から一字一句そのまま抜き出すこと（要約・言い換え・省略をしない）。長さは過去の引用に合わせる。",
       messages: [
         {
           role: "user",
@@ -195,7 +173,7 @@ async function pickQuotes(examples, article) {
 function textNodes(root) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode: (n) =>
-      n.parentElement.closest(`script, style, noscript, #${PANEL_ID}`) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+      n.parentElement.closest("script, style, noscript") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
   });
   const nodes = [];
   while (walker.nextNode()) nodes.push(walker.currentNode);
@@ -205,80 +183,25 @@ function textNodes(root) {
 function locate(root, quotes) {
   const nodes = textNodes(root);
   const texts = nodes.map((n) => n.data);
-  return quotes.map((q) => {
-    const match = findMatch(texts, q.text);
-    if (!match) return { ...q, range: null };
+  return quotes.flatMap((quote) => {
+    const match = findMatch(texts, quote);
+    if (!match) return [];
     const range = document.createRange();
     range.setStart(nodes[match.start[0]], match.start[1]);
     range.setEnd(nodes[match.end[0]], match.end[1]);
-    return { ...q, range };
-  });
-}
-
-function showPanel(content) {
-  let panel = document.getElementById(PANEL_ID);
-  if (!panel) {
-    panel = document.createElement("div");
-    panel.id = PANEL_ID;
-    panel.style.cssText =
-      "position:fixed;right:16px;bottom:16px;z-index:2147483647;width:min(360px,calc(100vw - 32px));max-height:60vh;overflow:auto;background:#fff;color:#222;border:1px solid #999;box-shadow:0 2px 12px rgba(0,0,0,.25);font:14px/1.5 system-ui,sans-serif;padding:8px 12px;";
-    document.body.append(panel);
-  }
-  panel.replaceChildren();
-  const close = document.createElement("button");
-  close.textContent = "閉じる";
-  close.style.cssText = "float:right;font:inherit;";
-  close.onclick = () => {
-    panel.remove();
-    CSS.highlights?.delete(PANEL_ID);
-  };
-  panel.append(close);
-  if (typeof content === "string") panel.append(content);
-  else panel.append(...content);
-}
-
-function renderResults(located) {
-  return located.map((q) => {
-    const item = document.createElement("div");
-    item.style.cssText = "border-top:1px solid #ddd;padding:6px 0;clear:both;";
-    const text = document.createElement(q.range ? "a" : "span");
-    text.textContent = q.text.length > 120 ? `${q.text.slice(0, 120)}…` : q.text;
-    if (q.range) {
-      text.href = "#";
-      text.style.color = "inherit";
-      text.onclick = (e) => {
-        e.preventDefault();
-        q.range.startContainer.parentElement.scrollIntoView({ behavior: "smooth", block: "center" });
-      };
-    } else {
-      text.style.color = "#888";
-      text.title = "本文中に見つからなかった";
-    }
-    const reason = document.createElement("div");
-    reason.textContent = q.reason;
-    reason.style.cssText = "color:#666;font-size:12px;";
-    const post = document.createElement("a");
-    post.textContent = "Tumblr に引用";
-    post.href = shareUrl(q.text, document.title, location.href);
-    post.target = "_blank";
-    post.rel = "noopener";
-    post.style.cssText = "font-size:12px;";
-    item.append(text, reason, post);
-    return item;
+    return [range];
   });
 }
 
 async function run() {
   const examples = loadExamples();
   const root = document.querySelector("article") || document.querySelector("main") || document.body;
-  showPanel(`引用候補を探しています…（過去の引用 ${examples.length} 件を参照）`);
-  const located = locate(root, await pickQuotes(examples, root.innerText));
+  const ranges = locate(root, await pickQuotes(examples, root.innerText));
+  if (!ranges.length) return alert("quote-scout: 引用しそうな箇所は見つからなかった");
 
-  if (CSS.highlights) {
-    const style = document.createElement("style");
-    style.textContent = `::highlight(${PANEL_ID}) { background-color: #ffe066; color: #000; }`;
-    document.head.append(style);
-    CSS.highlights.set(PANEL_ID, new Highlight(...located.filter((q) => q.range).map((q) => q.range)));
-  }
-  showPanel(located.length ? renderResults(located) : "引用しそうな箇所は見つからなかった");
+  const style = document.createElement("style");
+  style.textContent = `::highlight(${HIGHLIGHT}) { background-color: #ffe066; color: #000; }`;
+  document.head.append(style);
+  CSS.highlights.set(HIGHLIGHT, new Highlight(...ranges));
+  ranges[0].startContainer.parentElement.scrollIntoView({ behavior: "smooth", block: "center" });
 }
