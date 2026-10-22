@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert");
-const { extractQuote, findMatch, shareUrl } = require("../quote-scout.user.js");
+const { extractQuote, collectQuotes, findMatch, shareUrl } = require("../quote-scout.user.js");
 
 test("extractQuote: 自分の quote 投稿は content の quote ブロックを返す", () => {
   const post = {
@@ -50,4 +50,20 @@ test("shareUrl: Tumblr の quote 投稿画面の URL を作る", () => {
   assert.strictEqual(url.searchParams.get("content"), "本文");
   assert.strictEqual(url.searchParams.get("caption"), '<a href="https://example.com/a">記事タイトル</a>');
   assert.strictEqual(url.searchParams.get("canonicalUrl"), "https://example.com/a");
+});
+
+test("collectQuotes: 上限に達するまでページを辿って引用を集める", async () => {
+  const quote = (t) => ({ content: [{ type: "text", text: t, subtype: "quote" }] });
+  const offsets = [];
+  const fetchPage = async (offset) => {
+    offsets.push(offset);
+    return [quote(`q${offset}`), { content: [{ type: "image" }] }, quote(`r${offset}`)];
+  };
+  assert.deepStrictEqual(await collectQuotes(fetchPage, 4), ["q0", "r0", "q3", "r3"]);
+  assert.deepStrictEqual(offsets, [0, 3]);
+});
+
+test("collectQuotes: ポストが尽きたら止まる", async () => {
+  const pages = [[{ content: [{ type: "text", text: "a", subtype: "quote" }] }], []];
+  assert.deepStrictEqual(await collectQuotes(async () => pages.shift(), 10), ["a"]);
 });

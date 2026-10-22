@@ -12,13 +12,10 @@ https://raw.githubusercontent.com/dlwr/quote-scout/main/quote-scout.user.js
 
 ## 使い方
 
-ユーザースクリプトマネージャのメニューから「引用候補をハイライト」を選ぶ。初回は次を聞かれる（スクリプトストレージに保存される）。
+1. 一度 tumblr.com を開く。tumblr.com のページが提供している `window.tumblr.apiFetch` を使って過去の引用を読み込み、スクリプトのストレージに保存する（初回はブログ名を聞かれる）。7日経つと、次に tumblr.com を開いたときに読み込み直す
+2. 記事のページで、ユーザースクリプトマネージャのメニューから「引用候補をハイライト」を選ぶ。初回は Anthropic の API キーを聞かれる
 
-- 引用を集める Tumblr ブログ名
-- Tumblr の OAuth consumer key（https://www.tumblr.com/oauth/apps で登録したアプリのもの）
-- Anthropic の API キー
-
-過去の引用は7日間キャッシュする。キーを変えたいときはメニューの「API キーを設定し直す」。
+ブログ名や API キーを変えたいときはメニューの「設定をリセット」。
 
 本文は `article` → `main` → `body` の順で最初に見つかった要素から取る。1回の実行で記事全文と過去の引用を Claude Opus 5.5 に送るので、長い記事ほど料金がかかる。
 
